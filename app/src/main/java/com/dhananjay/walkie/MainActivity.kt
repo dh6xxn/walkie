@@ -12,13 +12,18 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import io.livekit.android.LiveKit
+import io.livekit.android.events.RoomEvent
+import io.livekit.android.events.collect
 import io.livekit.android.room.Room
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -29,13 +34,21 @@ import java.util.UUID
 private const val LIVEKIT_URL = "wss://walkie-c8ioe9eg.livekit.cloud"
 private const val TOKEN_URL = "https://walkie-tan.vercel.app/api/token"
 private const val DEFAULT_ROOM = "friends"
+private const val TALK_TOPIC = "walkie-talk-lock-v1"
+private const val TALK_ARBITRATION_MS = 700L
 
 class MainActivity : ComponentActivity() {
     private var room: Room? = null
+    private var roomEventsJob: Job? = null
+    private var talkRequestJob: Job? = null
     private var connected by mutableStateOf(false)
     private var connecting by mutableStateOf(false)
     private var talking by mutableStateOf(false)
+    private var requestingTalk by mutableStateOf(false)
+    private var speakerIdentity by mutableStateOf<String?>(null)
     private var status by mutableStateOf("Not connected")
+    private var localIdentity = ""
+    private val pendingTalkRequests = mutableMapOf<String, String>()
 
     private val permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (!granted) status = "Microphone permission is required"
@@ -46,15 +59,24 @@ class MainActivity : ComponentActivity() {
         requestMicrophonePermissionIfNeeded()
         setContent {
             WalkieApp(
-                onConnect = { connectToRoom() }, onDisconnect = { disconnectFromRoom() },
-                onTalkStart = { setMicrophone(true) }, onTalkEnd = { setMicrophone(false) },
-                isConnected = connected, isConnecting = connecting, isTalking = talking, status = status
+                onConnect = { connectToRoom() },
+                onDisconnect = { disconnectFromRoom() },
+                onTalkStart = { requestTalk() },
+                onTalkEnd = { releaseTalk() },
+                isConnected = connected,
+                isConnecting = connecting,
+                isTalking = talking,
+                isRequestingTalk = requestingTalk,
+                hasRemoteSpeaker = speakerIdentity != null && speakerIdentity != localIdentity,
+                status = status
             )
         }
     }
 
     private fun requestMicrophonePermissionIfNeeded() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
     }
 
     private fun connectToRoom() {
@@ -69,12 +91,17 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch {
             try {
                 val identity = "android-${UUID.randomUUID()}"
+                localIdentity = identity
                 val tokenResult = fetchToken(identity, DEFAULT_ROOM)
                 status = "Connecting to voice server…"
                 val createdRoom = LiveKit.create(applicationContext)
                 createdRoom.connect(tokenResult.second.ifBlank { LIVEKIT_URL }, tokenResult.first)
                 room = createdRoom
                 createdRoom.localParticipant.setMicrophoneEnabled(false)
+                roomEventsJob?.cancel()
+                roomEventsJob = lifecycleScope.launch {
+                    createdRoom.events.collect { event -> handleRoomEvent(createdRoom, event) }
+                }
                 connected = true
                 status = "Connected • Friends"
             } catch (e: Exception) {
@@ -83,29 +110,164 @@ class MainActivity : ComponentActivity() {
                 room = null
                 connected = false
                 talking = false
+                requestingTalk = false
+                speakerIdentity = null
                 status = "Connection failed: ${e.message ?: e.javaClass.simpleName}"
-            } finally { connecting = false }
+            } finally {
+                connecting = false
+            }
         }
+    }
+
+    private suspend fun handleRoomEvent(currentRoom: Room, event: RoomEvent) {
+        when (event) {
+            is RoomEvent.DataReceived -> {
+                val sender = event.participant?.identity?.toString() ?: return
+                if (sender == localIdentity) return
+                val message = runCatching { JSONObject(String(event.data, Charsets.UTF_8)) }.getOrNull() ?: return
+                if (event.topic != TALK_TOPIC) return
+                when (message.optString("type")) {
+                    "talk_request" -> {
+                        val requestId = message.optString("requestId")
+                        if (requestId.isBlank()) return
+                        if (speakerIdentity != null) {
+                            publishTalkMessage(currentRoom, JSONObject().apply {
+                                put("type", "talk_busy")
+                                put("speaker", speakerIdentity)
+                            })
+                        } else {
+                            pendingTalkRequests[requestId] = sender
+                        }
+                    }
+                    "talk_start" -> {
+                        val speaker = message.optString("speaker").ifBlank { sender }
+                        pendingTalkRequests.clear()
+                        talkRequestJob?.cancel()
+                        requestingTalk = false
+                        speakerIdentity = speaker
+                        if (speaker != localIdentity && talking) {
+                            currentRoom.localParticipant.setMicrophoneEnabled(false)
+                            talking = false
+                        }
+                        status = if (speaker == localIdentity) "Transmitting microphone audio" else "${displaySpeaker(speaker)} is talking"
+                    }
+                    "talk_end" -> {
+                        val speaker = message.optString("speaker").ifBlank { sender }
+                        if (speakerIdentity == speaker) {
+                            speakerIdentity = null
+                            if (!talking) status = "Listening"
+                        }
+                    }
+                    "talk_busy" -> {
+                        val speaker = message.optString("speaker")
+                        if (requestingTalk && speaker.isNotBlank()) {
+                            requestingTalk = false
+                            talkRequestJob?.cancel()
+                            speakerIdentity = speaker
+                            status = "${displaySpeaker(speaker)} is talking"
+                        }
+                    }
+                }
+            }
+            is RoomEvent.ParticipantDisconnected -> {
+                val departed = event.participant.identity?.toString() ?: return
+                pendingTalkRequests.entries.removeIf { it.value == departed }
+                if (speakerIdentity == departed) {
+                    speakerIdentity = null
+                    if (!talking) status = "Listening"
+                }
+            }
+            else -> Unit
+        }
+    }
+
+    private fun requestTalk() {
+        val currentRoom = room ?: return
+        if (!connected || talking || requestingTalk) return
+        if (speakerIdentity != null) {
+            status = "${displaySpeaker(speakerIdentity!!)} is talking"
+            return
+        }
+        requestingTalk = true
+        status = "Requesting microphone…"
+        val requestId = "${System.currentTimeMillis()}-$localIdentity"
+        pendingTalkRequests[requestId] = localIdentity
+        talkRequestJob?.cancel()
+        talkRequestJob = lifecycleScope.launch {
+            publishTalkMessage(currentRoom, JSONObject().apply {
+                put("type", "talk_request")
+                put("requestId", requestId)
+                put("identity", localIdentity)
+            })
+            delay(TALK_ARBITRATION_MS)
+            if (!requestingTalk || !connected || speakerIdentity != null) return@launch
+            val winner = pendingTalkRequests.entries.minByOrNull { it.key }?.value
+            if (winner == localIdentity) {
+                pendingTalkRequests.clear()
+                speakerIdentity = localIdentity
+                talking = true
+                requestingTalk = false
+                currentRoom.localParticipant.setMicrophoneEnabled(true)
+                publishTalkMessage(currentRoom, JSONObject().apply {
+                    put("type", "talk_start")
+                    put("speaker", localIdentity)
+                })
+                status = "Transmitting microphone audio"
+            } else {
+                requestingTalk = false
+                status = "Another person got the microphone"
+            }
+        }
+    }
+
+    private fun releaseTalk() {
+        val currentRoom = room ?: return
+        if (!talking && !requestingTalk) return
+        talkRequestJob?.cancel()
+        requestingTalk = false
+        if (talking) {
+            talking = false
+            speakerIdentity = null
+            lifecycleScope.launch {
+                currentRoom.localParticipant.setMicrophoneEnabled(false)
+                publishTalkMessage(currentRoom, JSONObject().apply {
+                    put("type", "talk_end")
+                    put("speaker", localIdentity)
+                })
+                status = "Listening"
+            }
+        } else {
+            pendingTalkRequests.entries.removeIf { it.value == localIdentity }
+            status = "Listening"
+        }
+    }
+
+    private suspend fun publishTalkMessage(currentRoom: Room, message: JSONObject) {
+        currentRoom.localParticipant.publishData(
+            message.toString().toByteArray(Charsets.UTF_8),
+            topic = TALK_TOPIC
+        )
+    }
+
+    private fun displaySpeaker(identity: String): String {
+        return if (identity.startsWith("android-")) "Friend" else identity
     }
 
     private fun disconnectFromRoom() {
-        lifecycleScope.launch {
-            try { room?.localParticipant?.setMicrophoneEnabled(false); room?.disconnect() }
-            finally { room = null; connected = false; talking = false; status = "Not connected" }
-        }
-    }
-
-    private fun setMicrophone(enabled: Boolean) {
-        val currentRoom = room ?: return
-        if (!connected) return
-        talking = enabled
+        talkRequestJob?.cancel()
+        roomEventsJob?.cancel()
         lifecycleScope.launch {
             try {
-                currentRoom.localParticipant.setMicrophoneEnabled(enabled)
-                status = if (enabled) "Transmitting microphone audio" else "Listening"
-            } catch (e: Exception) {
+                room?.localParticipant?.setMicrophoneEnabled(false)
+                room?.disconnect()
+            } finally {
+                room = null
+                connected = false
                 talking = false
-                status = "Microphone error: ${e.message ?: e.javaClass.simpleName}"
+                requestingTalk = false
+                speakerIdentity = null
+                pendingTalkRequests.clear()
+                status = "Not connected"
             }
         }
     }
@@ -128,7 +290,6 @@ class MainActivity : ComponentActivity() {
                     val body = JSONObject().apply { put("identity", identity); put("room", roomName) }.toString()
                     connection.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
                     val code = connection.responseCode
-
                     if (code == HttpURLConnection.HTTP_MOVED_TEMP || code == HttpURLConnection.HTTP_MOVED_PERM || code == 307 || code == 308) {
                         val location = connection.getHeaderField("Location")
                         if (location.isNullOrBlank()) throw IllegalStateException("Token server returned HTTP $code without a redirect location")
@@ -142,41 +303,103 @@ class MainActivity : ComponentActivity() {
                         if (token.isBlank()) throw IllegalStateException("Token server returned no access token")
                         return@withContext Pair(token, json.optString("server_url"))
                     }
-                } finally { connection.disconnect() }
+                } finally {
+                    connection.disconnect()
+                }
             }
             throw IllegalStateException("Token server redirected too many times")
         }
 
-    override fun onDestroy() { room?.disconnect(); room = null; super.onDestroy() }
+    override fun onDestroy() {
+        talkRequestJob?.cancel()
+        roomEventsJob?.cancel()
+        room?.disconnect()
+        room = null
+        super.onDestroy()
+    }
 }
 
 @Composable
 private fun WalkieApp(
-    onConnect: () -> Unit, onDisconnect: () -> Unit, onTalkStart: () -> Unit, onTalkEnd: () -> Unit,
-    isConnected: Boolean, isConnecting: Boolean, isTalking: Boolean, status: String
+    onConnect: () -> Unit,
+    onDisconnect: () -> Unit,
+    onTalkStart: () -> Unit,
+    onTalkEnd: () -> Unit,
+    isConnected: Boolean,
+    isConnecting: Boolean,
+    isTalking: Boolean,
+    isRequestingTalk: Boolean,
+    hasRemoteSpeaker: Boolean,
+    status: String
 ) {
     MaterialTheme {
         Surface(Modifier.fillMaxSize()) {
-            Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Column(
+                Modifier.fillMaxSize().padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
                 Spacer(Modifier.height(40.dp))
                 Text("Walkie", style = MaterialTheme.typography.headlineLarge)
                 Text(status)
                 Spacer(Modifier.weight(1f))
-                Button(enabled = !isConnecting, onClick = { if (isConnected) onDisconnect() else onConnect() }) {
+                Button(
+                    enabled = !isConnecting,
+                    onClick = { if (isConnected) onDisconnect() else onConnect() }
+                ) {
                     Text(if (isConnected) "Disconnect" else if (isConnecting) "Connecting…" else "Connect")
                 }
                 Spacer(Modifier.height(24.dp))
-                Box(Modifier.size(220.dp).pointerInput(isConnected) { detectTapGestures(onPress = { if (!isConnected) return@detectTapGestures; onTalkStart(); try { tryAwaitRelease() } finally { onTalkEnd() } }) }) {
-                    Surface(Modifier.fillMaxSize(), shape = MaterialTheme.shapes.extraLarge, tonalElevation = 6.dp) {
+                val talkEnabled = isConnected && !hasRemoteSpeaker && !isRequestingTalk
+                Box(
+                    Modifier
+                        .size(170.dp)
+                        .pointerInput(isConnected, hasRemoteSpeaker, isRequestingTalk) {
+                            detectTapGestures(
+                                onPress = {
+                                    if (!talkEnabled) return@detectTapGestures
+                                    onTalkStart()
+                                    try {
+                                        tryAwaitRelease()
+                                    } finally {
+                                        onTalkEnd()
+                                    }
+                                }
+                            )
+                        }
+                ) {
+                    Surface(
+                        Modifier.fillMaxSize(),
+                        shape = MaterialTheme.shapes.extraLarge,
+                        color = if (talkEnabled || isTalking) Color(0xFFE53935) else Color(0xFFEAA0A0),
+                        tonalElevation = 6.dp
+                    ) {
                         Box(contentAlignment = Alignment.Center) {
-                            Text(if (isTalking) "RELEASE" else "HOLD TO TALK")
+                            Text(
+                                when {
+                                    isTalking -> "RELEASE"
+                                    hasRemoteSpeaker -> "BUSY"
+                                    isRequestingTalk -> "WAIT…"
+                                    else -> "HOLD TO TALK"
+                                },
+                                color = Color.White
+                            )
                         }
                     }
                 }
                 Spacer(Modifier.height(24.dp))
-                Text(if (isConnected) "Hold to transmit" else "Connect to start")
+                Text(
+                    when {
+                        !isConnected -> "Connect to start"
+                        hasRemoteSpeaker -> "Wait for ${displayNameForUi(status)} to finish"
+                        isRequestingTalk -> "Waiting for microphone…"
+                        else -> "Hold to transmit • Release to listen"
+                    }
+                )
                 Spacer(Modifier.weight(1f))
             }
         }
     }
 }
+
+private fun displayNameForUi(status: String): String =
+    if (status.contains("is talking")) status.substringBefore(" is talking") else "them"
