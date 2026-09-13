@@ -114,7 +114,7 @@ class MainActivity : ComponentActivity() {
         withContext(Dispatchers.IO) {
             var targetUrl = TOKEN_URL
             var redirects = 0
-            while (true) {
+            while (redirects < 5) {
                 val connection = (URL(targetUrl).openConnection() as HttpURLConnection).apply {
                     requestMethod = "POST"
                     connectTimeout = 10_000
@@ -132,7 +132,7 @@ class MainActivity : ComponentActivity() {
                     if (code == HttpURLConnection.HTTP_MOVED_TEMP || code == HttpURLConnection.HTTP_MOVED_PERM || code == 307 || code == 308) {
                         val location = connection.getHeaderField("Location")
                         if (location.isNullOrBlank()) throw IllegalStateException("Token server returned HTTP $code without a redirect location")
-                        if (++redirects > 5) throw IllegalStateException("Token server redirected too many times")
+                        if (++redirects >= 5) throw IllegalStateException("Token server redirected too many times")
                         targetUrl = URL(URL(targetUrl), location).toString()
                     } else {
                         val response = if (code in 200..299) connection.inputStream.bufferedReader().use { it.readText() } else connection.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
@@ -144,6 +144,7 @@ class MainActivity : ComponentActivity() {
                     }
                 } finally { connection.disconnect() }
             }
+            throw IllegalStateException("Token server redirected too many times")
         }
 
     override fun onDestroy() { room?.disconnect(); room = null; super.onDestroy() }
