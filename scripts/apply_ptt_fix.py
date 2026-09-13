@@ -3,6 +3,7 @@ from pathlib import Path
 path = Path("app/src/main/java/com/dhananjay/walkie/MainActivity.kt")
 text = path.read_text()
 
+# Keep the push-to-talk gesture stable while Compose state changes during arbitration.
 old_anchor = '''                } else {\n                    val talkEnabled = !hasRemoteSpeaker && !isRequestingTalk\n                    Box(\n'''
 new_anchor = '''                } else {\n                    val talkEnabled = !hasRemoteSpeaker && !isRequestingTalk\n                    val currentOnTalkStart = rememberUpdatedState(onTalkStart)\n                    val currentOnTalkEnd = rememberUpdatedState(onTalkEnd)\n                    val currentIsTalking = rememberUpdatedState(isTalking)\n                    val currentHasRemoteSpeaker = rememberUpdatedState(hasRemoteSpeaker)\n                    Box(\n'''
 if old_anchor not in text:
@@ -15,5 +16,13 @@ if old_gesture not in text:
     raise SystemExit("Expected pointerInput block not found")
 text = text.replace(old_gesture, new_gesture, 1)
 
+# Add a visible disconnect control whenever the room is connected.
+disconnect_anchor = '''                    Text(\n                        text = "Room: friends",\n                        style = MaterialTheme.typography.bodyLarge,\n                        color = secondaryText\n                    )\n                } else {\n'''
+disconnect_replacement = '''                    Text(\n                        text = "Room: friends",\n                        style = MaterialTheme.typography.bodyLarge,\n                        color = secondaryText\n                    )\n                    Spacer(Modifier.height(12.dp))\n                    OutlinedButton(onClick = onDisconnect) {\n                        Text("Disconnect")\n                    }\n                } else {\n'''
+if 'Text("Disconnect")' not in text:
+    if disconnect_anchor not in text:
+        raise SystemExit("Expected connected-room UI anchor not found")
+    text = text.replace(disconnect_anchor, disconnect_replacement, 1)
+
 path.write_text(text)
-print("Push-to-talk gesture fix applied")
+print("Push-to-talk and disconnect UI fixes applied")
