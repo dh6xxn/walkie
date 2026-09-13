@@ -13,7 +13,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -359,19 +359,12 @@ private fun WalkieApp(
                     style = MaterialTheme.typography.displaySmall,
                     color = primaryText
                 )
-
                 Spacer(Modifier.height(18.dp))
 
                 if (isConnected) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(12.dp)
-                                .padding(end = 6.dp)
-                        ) {
-                            Canvas(Modifier.fillMaxSize()) {
-                                drawCircle(Color(0xFF42D56B))
-                            }
+                        Canvas(Modifier.size(12.dp)) {
+                            drawCircle(Color(0xFF42D56B))
                         }
                         Spacer(Modifier.width(7.dp))
                         Text(
@@ -388,7 +381,7 @@ private fun WalkieApp(
                     )
                 } else {
                     Text(
-                        text = if (isConnecting) status else status,
+                        text = status,
                         style = MaterialTheme.typography.bodyLarge,
                         color = secondaryText
                     )
@@ -528,18 +521,18 @@ private fun MicIndicator(modifier: Modifier = Modifier, color: Color) {
         drawCircle(color.copy(alpha = 0.045f), radius, center)
         drawCircle(color.copy(alpha = 0.07f), radius * 0.72f, center)
         drawCircle(color.copy(alpha = 0.10f), radius * 0.50f, center)
-        MicGlyphCanvas(center, radius * 0.27f, color)
+        drawMic(center, radius * 0.27f, color)
     }
 }
 
 @Composable
 private fun MicGlyph(modifier: Modifier = Modifier, color: Color) {
     Canvas(modifier) {
-        MicGlyphCanvas(Offset(size.width / 2f, size.height / 2f), size.minDimension * 0.32f, color)
+        drawMic(Offset(size.width / 2f, size.height / 2f), size.minDimension * 0.32f, color)
     }
 }
 
-private fun androidx.compose.ui.graphics.drawscope.DrawScope.MicGlyphCanvas(
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawMic(
     center: Offset,
     scale: Float,
     color: Color
@@ -552,7 +545,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.MicGlyphCanvas(
         color = color,
         topLeft = Offset(left, top),
         size = Size(micWidth, micHeight),
-        cornerRadius = androidx.compose.ui.geometry.CornerRadius(micWidth / 2f)
+        cornerRadius = CornerRadius(micWidth / 2f)
     )
     val arcLeft = center.x - scale * 0.55f
     val arcTop = center.y - scale * 0.25f
@@ -562,7 +555,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.MicGlyphCanvas(
         startAngle = 0f,
         sweepAngle = 180f,
         useCenter = false,
-        topLeft = arcLeft to arcTop,
+        topLeft = Offset(arcLeft, arcTop),
         size = arcSize,
         style = androidx.compose.ui.graphics.drawscope.Stroke(width = scale * 0.13f)
     )
@@ -579,6 +572,3 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.MicGlyphCanvas(
         strokeWidth = scale * 0.13f
     )
 }
-
-private fun displayNameForUi(status: String): String =
-    if (status.contains("is talking")) status.substringBefore(" is talking") else "them"
