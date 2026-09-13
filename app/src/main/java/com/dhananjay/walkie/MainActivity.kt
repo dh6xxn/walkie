@@ -27,7 +27,7 @@ import java.net.URL
 import java.util.UUID
 
 private const val LIVEKIT_URL = "wss://walkie-c8ioe9eg.livekit.cloud"
-private const val TOKEN_URL = "https://walkie.vercel.app/api/token"
+private const val TOKEN_URL = "https://walkie-tan.vercel.app/api/token"
 private const val DEFAULT_ROOM = "friends"
 
 class MainActivity : ComponentActivity() {
