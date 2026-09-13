@@ -160,8 +160,8 @@ private fun WalkieApp(
                 Spacer(Modifier.height(40.dp)); Text("Walkie", style = MaterialTheme.typography.headlineLarge); Text(status); Spacer(Modifier.weight(1f))
                 Button(enabled = !isConnecting, onClick = { if (isConnected) onDisconnect() else onConnect() }) { Text(if (isConnected) "Disconnect" else if (isConnecting) "Connecting…" else "Connect") }
                 Spacer(Modifier.height(24.dp))
-                Box(Modifier.size(220.dp).pointerInput(isConnected) { detectTapGestures(onPress = { if (!isConnected) return@detectTapGestures; onTalkStart(); try { tryAwaitRelease() } finally { onTalkEnd() } }) }, contentAlignment = Alignment.Center) {
-                    Surface(Modifier.fillMaxSize(), shape = MaterialTheme.shapes.extraLarge, tonalElevation = 6.dp) { Box(contentAlignment = Alignment.Center) { Text(if (isTalking) "RELEASE" else "HOLD TO TALK") } }
+                Box(Modifier.size(220.dp).pointerInput(isConnected) { detectTapGestures(onPress = { if (!isConnected) return@detectTapGestures; onTalkStart(); try { tryAwaitRelease() } finally { onTalkEnd() } }) }) {
+                    Surface(Modifier.fillMaxSize(), shape = MaterialTheme.shapes.extraLarge, tonalElevation = 6.dp) { Box(contentAlignment = Alignment.Center) { Text(if (isTalking) "RELEASE" else "HOLD TO TALK", style = MaterialTheme.typography.headlineSmall) } }
                 }
                 Spacer(Modifier.height(24.dp)); Text(if (isConnected) "Hold to transmit" else "Connect to start"); Spacer(Modifier.weight(1f))
             }
