@@ -1,0 +1,6 @@
+{
+  "name": "walkie-api",
+  "private": true,
+  "engines": { "node": ">=20" },
+  "dependencies": { "livekit-server-sdk": "^2.19.0" }
+}
