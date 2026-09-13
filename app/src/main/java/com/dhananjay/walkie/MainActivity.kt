@@ -110,11 +110,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private suspend fun fetchToken(identity: String, roomName: String): Pair<String, String> {
-        return withContext(Dispatchers.IO) {
+    private suspend fun fetchToken(identity: String, roomName: String): Pair<String, String> =
+        withContext(Dispatchers.IO) {
             var targetUrl = TOKEN_URL
             var redirects = 0
-            while (true) {
+            loop@ while (true) {
                 val connection = (URL(targetUrl).openConnection() as HttpURLConnection).apply {
                     requestMethod = "POST"
                     connectTimeout = 10_000
@@ -134,7 +134,7 @@ class MainActivity : ComponentActivity() {
                         if (location.isNullOrBlank()) throw IllegalStateException("Token server returned HTTP $code without a redirect location")
                         if (++redirects > 5) throw IllegalStateException("Token server redirected too many times")
                         targetUrl = URL(URL(targetUrl), location).toString()
-                        continue
+                        continue@loop
                     }
 
                     val response = if (code in 200..299) connection.inputStream.bufferedReader().use { it.readText() } else connection.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
@@ -146,7 +146,6 @@ class MainActivity : ComponentActivity() {
                 } finally { connection.disconnect() }
             }
         }
-    }
 
     override fun onDestroy() { room?.disconnect(); room = null; super.onDestroy() }
 }
@@ -163,7 +162,7 @@ private fun WalkieApp(
                 Button(enabled = !isConnecting, onClick = { if (isConnected) onDisconnect() else onConnect() }) { Text(if (isConnected) "Disconnect" else if (isConnecting) "Connecting…" else "Connect") }
                 Spacer(Modifier.height(24.dp))
                 Box(Modifier.size(220.dp).pointerInput(isConnected) { detectTapGestures(onPress = { if (!isConnected) return@detectTapGestures; onTalkStart(); try { tryAwaitRelease() } finally { onTalkEnd() } }) }) {
-                    Surface(Modifier.fillMaxSize(), shape = MaterialTheme.shapes.extraLarge, tonalElevation = 6.dp) { Box(contentAlignment = Alignment.Center) { Text(if (isTalking) "RELEASE" else "HOLD", style = MaterialTheme.typography.displaySmall) } }
+                    Surface(Modifier.fillMaxSize(), shape = MaterialTheme.shapes.extraLarge, tonalElevation = 6.dp) { Box(contentAlignment = Alignment.Center) { Text(if (isTalking) "RELEASE" else "HOLD TO TALK", style = MaterialTheme.typography.headlineSmall) } }
                 }
                 Spacer(Modifier.height(24.dp)); Text(if (isConnected) "Hold to transmit" else "Connect to start"); Spacer(Modifier.weight(1f))
             }
