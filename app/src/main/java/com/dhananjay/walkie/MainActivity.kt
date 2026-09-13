@@ -110,39 +110,41 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private suspend fun fetchToken(identity: String, roomName: String): Pair<String, String> = withContext(Dispatchers.IO) {
-        var targetUrl = TOKEN_URL
-        var redirects = 0
-        while (true) {
-            val connection = (URL(targetUrl).openConnection() as HttpURLConnection).apply {
-                requestMethod = "POST"
-                connectTimeout = 10_000
-                readTimeout = 10_000
-                doOutput = true
-                instanceFollowRedirects = false
-                setRequestProperty("Content-Type", "application/json")
-                setRequestProperty("Accept", "application/json")
-            }
-            try {
-                val body = JSONObject().apply { put("identity", identity); put("room", roomName) }.toString()
-                connection.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
-                val code = connection.responseCode
-
-                if (code == HttpURLConnection.HTTP_MOVED_TEMP || code == HttpURLConnection.HTTP_MOVED_PERM || code == 307 || code == 308) {
-                    val location = connection.getHeaderField("Location")
-                    if (location.isNullOrBlank()) throw IllegalStateException("Token server returned HTTP $code without a redirect location")
-                    if (++redirects > 5) throw IllegalStateException("Token server redirected too many times")
-                    targetUrl = URL(URL(targetUrl), location).toString()
-                    continue
+    private suspend fun fetchToken(identity: String, roomName: String): Pair<String, String> {
+        return withContext(Dispatchers.IO) {
+            var targetUrl = TOKEN_URL
+            var redirects = 0
+            while (true) {
+                val connection = (URL(targetUrl).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    connectTimeout = 10_000
+                    readTimeout = 10_000
+                    doOutput = true
+                    instanceFollowRedirects = false
+                    setRequestProperty("Content-Type", "application/json")
+                    setRequestProperty("Accept", "application/json")
                 }
+                try {
+                    val body = JSONObject().apply { put("identity", identity); put("room", roomName) }.toString()
+                    connection.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+                    val code = connection.responseCode
 
-                val response = if (code in 200..299) connection.inputStream.bufferedReader().use { it.readText() } else connection.errorStream?.bufferedReader()?.use { it.readText() } ?: "HTTP $code"
-                val json = runCatching { JSONObject(response) }.getOrElse { throw IllegalStateException("Token server returned HTTP $code: $response") }
-                if (code !in 200..299) throw IllegalStateException(json.optString("error", "Token request failed (HTTP $code)"))
-                val token = json.optString("participant_token").ifBlank { json.optString("token") }
-                if (token.isBlank()) throw IllegalStateException("Token server returned no access token")
-                return@withContext Pair(token, json.optString("server_url"))
-            } finally { connection.disconnect() }
+                    if (code == HttpURLConnection.HTTP_MOVED_TEMP || code == HttpURLConnection.HTTP_MOVED_PERM || code == 307 || code == 308) {
+                        val location = connection.getHeaderField("Location")
+                        if (location.isNullOrBlank()) throw IllegalStateException("Token server returned HTTP $code without a redirect location")
+                        if (++redirects > 5) throw IllegalStateException("Token server redirected too many times")
+                        targetUrl = URL(URL(targetUrl), location).toString()
+                        continue
+                    }
+
+                    val response = if (code in 200..299) connection.inputStream.bufferedReader().use { it.readText() } else connection.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
+                    val json = runCatching { JSONObject(response) }.getOrElse { throw IllegalStateException("Token server returned HTTP $code: $response") }
+                    if (code !in 200..299) throw IllegalStateException(json.optString("error", "Token request failed (HTTP $code)"))
+                    val token = json.optString("participant_token").ifBlank { json.optString("token") }
+                    if (token.isBlank()) throw IllegalStateException("Token server returned no access token")
+                    return@withContext Pair(token, json.optString("server_url"))
+                } finally { connection.disconnect() }
+            }
         }
     }
 
@@ -161,7 +163,7 @@ private fun WalkieApp(
                 Button(enabled = !isConnecting, onClick = { if (isConnected) onDisconnect() else onConnect() }) { Text(if (isConnected) "Disconnect" else if (isConnecting) "Connecting…" else "Connect") }
                 Spacer(Modifier.height(24.dp))
                 Box(Modifier.size(220.dp).pointerInput(isConnected) { detectTapGestures(onPress = { if (!isConnected) return@detectTapGestures; onTalkStart(); try { tryAwaitRelease() } finally { onTalkEnd() } }) }) {
-                    Surface(Modifier.fillMaxSize(), shape = MaterialTheme.shapes.extraLarge, tonalElevation = 6.dp) { Box(contentAlignment = Alignment.Center) { Text(if (isTalking) "RELEASE" else "HOLD TO TALK") } }
+                    Surface(Modifier.fillMaxSize(), shape = MaterialTheme.shapes.extraLarge, tonalElevation = 6.dp) { Box(contentAlignment = Alignment.Center) { Text(if (isTalking) "RELEASE" else "HOLD TO TALK", style = MaterialTheme.typography.headlineSmall) } }
                 }
                 Spacer(Modifier.height(24.dp)); Text(if (isConnected) "Hold to transmit" else "Connect to start"); Spacer(Modifier.weight(1f))
             }
