@@ -35,13 +35,10 @@ class MainActivity : ComponentActivity() {
     private var connected by mutableStateOf(false)
     private var connecting by mutableStateOf(false)
     private var talking by mutableStateOf(false)
+    private var status by mutableStateOf("Not connected")
 
-    private val permissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (!granted) {
-            connected = false
-        }
+    private val permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (!granted) status = "Microphone permission is required"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -49,62 +46,52 @@ class MainActivity : ComponentActivity() {
         requestMicrophonePermissionIfNeeded()
         setContent {
             WalkieApp(
-                onConnect = { connectToRoom() },
-                onDisconnect = { disconnectFromRoom() },
-                onTalkStart = { setMicrophone(true) },
-                onTalkEnd = { setMicrophone(false) },
-                isConnected = connected,
-                isConnecting = connecting,
-                isTalking = talking
+                onConnect = { connectToRoom() }, onDisconnect = { disconnectFromRoom() },
+                onTalkStart = { setMicrophone(true) }, onTalkEnd = { setMicrophone(false) },
+                isConnected = connected, isConnecting = connecting, isTalking = talking, status = status
             )
         }
     }
 
     private fun requestMicrophonePermissionIfNeeded() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
     }
 
     private fun connectToRoom() {
         if (connected || connecting) return
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            status = "Allow microphone permission, then Connect"
             return
         }
-
         connecting = true
+        status = "Requesting connection token…"
         lifecycleScope.launch {
             try {
                 val identity = "android-${UUID.randomUUID()}"
-                val token = fetchToken(identity, DEFAULT_ROOM)
+                val tokenResult = fetchToken(identity, DEFAULT_ROOM)
+                status = "Connecting to voice server…"
                 val createdRoom = LiveKit.create(applicationContext)
-                createdRoom.connect(LIVEKIT_URL, token)
+                createdRoom.connect(tokenResult.second.ifBlank { LIVEKIT_URL }, tokenResult.first)
                 room = createdRoom
-                connected = true
-                // Start connected with the microphone muted. PTT enables it only while pressed.
                 createdRoom.localParticipant.setMicrophoneEnabled(false)
+                connected = true
+                status = "Connected • Friends"
             } catch (e: Exception) {
                 e.printStackTrace()
-                room?.disconnect()
+                try { room?.disconnect() } catch (_: Exception) { }
                 room = null
                 connected = false
-            } finally {
-                connecting = false
-            }
+                talking = false
+                status = "Connection failed: ${e.message ?: e.javaClass.simpleName}"
+            } finally { connecting = false }
         }
     }
 
     private fun disconnectFromRoom() {
         lifecycleScope.launch {
-            try {
-                room?.localParticipant?.setMicrophoneEnabled(false)
-                room?.disconnect()
-            } finally {
-                room = null
-                connected = false
-                talking = false
-            }
+            try { room?.localParticipant?.setMicrophoneEnabled(false); room?.disconnect() }
+            finally { room = null; connected = false; talking = false; status = "Not connected" }
         }
     }
 
@@ -115,122 +102,50 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch {
             try {
                 currentRoom.localParticipant.setMicrophoneEnabled(enabled)
+                status = if (enabled) "Transmitting microphone audio" else "Listening"
             } catch (e: Exception) {
-                e.printStackTrace()
                 talking = false
+                status = "Microphone error: ${e.message ?: e.javaClass.simpleName}"
             }
         }
     }
 
-    private suspend fun fetchToken(identity: String, roomName: String): String = withContext(Dispatchers.IO) {
+    private suspend fun fetchToken(identity: String, roomName: String): Pair<String, String> = withContext(Dispatchers.IO) {
         val connection = (URL(TOKEN_URL).openConnection() as HttpURLConnection).apply {
-            requestMethod = "POST"
-            connectTimeout = 10_000
-            readTimeout = 10_000
-            doOutput = true
-            setRequestProperty("Content-Type", "application/json")
+            requestMethod = "POST"; connectTimeout = 10_000; readTimeout = 10_000; doOutput = true
+            setRequestProperty("Content-Type", "application/json"); setRequestProperty("Accept", "application/json")
         }
         try {
-            val body = JSONObject().apply {
-                put("identity", identity)
-                put("room", roomName)
-            }.toString()
+            val body = JSONObject().apply { put("identity", identity); put("room", roomName) }.toString()
             connection.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
-            val response = if (connection.responseCode in 200..299) {
-                connection.inputStream.bufferedReader().use { it.readText() }
-            } else {
-                connection.errorStream?.bufferedReader()?.use { it.readText() } ?: "Token request failed"
-            }
-            if (connection.responseCode !in 200..299) {
-                throw IllegalStateException(response)
-            }
-            JSONObject(response).getString("token")
-        } finally {
-            connection.disconnect()
-        }
+            val code = connection.responseCode
+            val response = if (code in 200..299) connection.inputStream.bufferedReader().use { it.readText() } else connection.errorStream?.bufferedReader()?.use { it.readText() } ?: "HTTP $code"
+            val json = runCatching { JSONObject(response) }.getOrElse { throw IllegalStateException("Token server returned HTTP $code") }
+            if (code !in 200..299) throw IllegalStateException(json.optString("error", "Token request failed (HTTP $code)"))
+            val token = json.optString("participant_token").ifBlank { json.optString("token") }
+            if (token.isBlank()) throw IllegalStateException("Token server returned no access token")
+            Pair(token, json.optString("server_url"))
+        } finally { connection.disconnect() }
     }
 
-    override fun onDestroy() {
-        room?.disconnect()
-        room = null
-        super.onDestroy()
-    }
+    override fun onDestroy() { room?.disconnect(); room = null; super.onDestroy() }
 }
 
 @Composable
 private fun WalkieApp(
-    onConnect: () -> Unit,
-    onDisconnect: () -> Unit,
-    onTalkStart: () -> Unit,
-    onTalkEnd: () -> Unit,
-    isConnected: Boolean,
-    isConnecting: Boolean,
-    isTalking: Boolean
+    onConnect: () -> Unit, onDisconnect: () -> Unit, onTalkStart: () -> Unit, onTalkEnd: () -> Unit,
+    isConnected: Boolean, isConnecting: Boolean, isTalking: Boolean, status: String
 ) {
     MaterialTheme {
         Surface(Modifier.fillMaxSize()) {
-            Column(
-                Modifier.fillMaxSize().padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Spacer(Modifier.height(40.dp))
-                Text("Walkie", style = MaterialTheme.typography.headlineLarge)
-                Text(
-                    when {
-                        isConnecting -> "Connecting to Friends…"
-                        isConnected -> "Connected • Friends"
-                        else -> "Not connected"
-                    }
-                )
-                Spacer(Modifier.weight(1f))
-
-                Button(
-                    enabled = !isConnecting,
-                    onClick = { if (isConnected) onDisconnect() else onConnect() }
-                ) {
-                    Text(if (isConnected) "Disconnect" else if (isConnecting) "Connecting…" else "Connect")
-                }
-
+            Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Spacer(Modifier.height(40.dp)); Text("Walkie", style = MaterialTheme.typography.headlineLarge); Text(status); Spacer(Modifier.weight(1f))
+                Button(enabled = !isConnecting, onClick = { if (isConnected) onDisconnect() else onConnect() }) { Text(if (isConnected) "Disconnect" else if (isConnecting) "Connecting…" else "Connect") }
                 Spacer(Modifier.height(24.dp))
-
-                Box(
-                    modifier = Modifier
-                        .size(220.dp)
-                        .pointerInput(isConnected) {
-                            detectTapGestures(
-                                onPress = {
-                                    if (!isConnected) return@detectTapGestures
-                                    onTalkStart()
-                                    try {
-                                        tryAwaitRelease()
-                                    } finally {
-                                        onTalkEnd()
-                                    }
-                                }
-                            )
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Surface(
-                        modifier = Modifier.fillMaxSize(),
-                        shape = MaterialTheme.shapes.extraLarge,
-                        tonalElevation = 6.dp
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Text(if (isTalking) "RELEASE" else "HOLD TO TALK")
-                        }
-                    }
+                Box(Modifier.size(220.dp).pointerInput(isConnected) { detectTapGestures(onPress = { if (!isConnected) return@detectTapGestures; onTalkStart(); try { tryAwaitRelease() } finally { onTalkEnd() } }) }, contentAlignment = Alignment.Center) {
+                    Surface(Modifier.fillMaxSize(), shape = MaterialTheme.shapes.extraLarge, tonalElevation = 6.dp) { Box(contentAlignment = Alignment.Center) { Text(if (isTalking) "RELEASE" else "HOLD TO TALK") } }
                 }
-
-                Spacer(Modifier.height(24.dp))
-                Text(
-                    when {
-                        !isConnected -> "Connect to start"
-                        isTalking -> "Transmitting microphone audio"
-                        else -> "Listening"
-                    }
-                )
-                Spacer(Modifier.weight(1f))
+                Spacer(Modifier.height(24.dp)); Text(if (isConnected) "Hold to transmit" else "Connect to start"); Spacer(Modifier.weight(1f))
             }
         }
     }
