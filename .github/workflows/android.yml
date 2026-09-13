@@ -34,6 +34,72 @@ jobs:
           test -s app/google-services.json
           python3 -m json.tool app/google-services.json >/dev/null
 
+      - name: Apply push-to-talk gesture fix
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("app/src/main/java/com/dhananjay/walkie/MainActivity.kt")
+          s = p.read_text()
+
+          old = '''                } else {
+                    val talkEnabled = !hasRemoteSpeaker && !isRequestingTalk
+                    Box(
+'''
+          new = '''                } else {
+                    val talkEnabled = !hasRemoteSpeaker && !isRequestingTalk
+                    val currentOnTalkStart = rememberUpdatedState(onTalkStart)
+                    val currentOnTalkEnd = rememberUpdatedState(onTalkEnd)
+                    val currentIsTalking = rememberUpdatedState(isTalking)
+                    val currentHasRemoteSpeaker = rememberUpdatedState(hasRemoteSpeaker)
+                    Box(
+'''
+          if old not in s:
+              raise SystemExit("Expected talk UI anchor not found")
+          s = s.replace(old, new, 1)
+
+          old = '''                            .pointerInput(hasRemoteSpeaker, isRequestingTalk, isTalking) {
+                                detectTapGestures(
+                                    onPress = {
+                                        if (!talkEnabled && !isTalking) return@detectTapGestures
+                                        if (!isTalking) onTalkStart()
+                                        try {
+                                            tryAwaitRelease()
+                                        } finally {
+                                            onTalkEnd()
+                                        }
+                                    }
+                                )
+                            },
+'''
+          new = '''                            .pointerInput(Unit) {
+                                detectTapGestures(
+                                    onPress = {
+                                        // Keep this gesture coroutine alive while the request is
+                                        // being arbitrated. The old implementation keyed
+                                        // pointerInput on requesting/talking state, which restarted
+                                        // the gesture as soon as requestTalk() set requestingTalk=true.
+                                        if (currentHasRemoteSpeaker.value && !currentIsTalking.value) {
+                                            return@detectTapGestures
+                                        }
+                                        if (!currentIsTalking.value) currentOnTalkStart.value()
+                                        try {
+                                            tryAwaitRelease()
+                                        } finally {
+                                            currentOnTalkEnd.value()
+                                        }
+                                    }
+                                )
+                            },
+'''
+          if old not in s:
+              raise SystemExit("Expected pointerInput block not found")
+          s = s.replace(old, new, 1)
+
+          p.write_text(s)
+          print("Push-to-talk gesture patch applied")
+          PY
+          grep -n "pointerInput(Unit)" app/src/main/java/com/dhananjay/walkie/MainActivity.kt
+
       - name: Build debug APK
         run: gradle assembleDebug --no-daemon --stacktrace
 
