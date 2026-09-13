@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
 import io.livekit.android.LiveKit
 import io.livekit.android.room.Room
 import kotlinx.coroutines.Dispatchers
@@ -31,65 +32,92 @@ private const val DEFAULT_ROOM = "friends"
 
 class MainActivity : ComponentActivity() {
     private var room: Room? = null
+    private var connected by mutableStateOf(false)
+    private var connecting by mutableStateOf(false)
+    private var talking by mutableStateOf(false)
+
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { }
+    ) { granted ->
+        if (!granted) {
+            connected = false
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-        }
+        requestMicrophonePermissionIfNeeded()
         setContent {
             WalkieApp(
                 onConnect = { connectToRoom() },
                 onDisconnect = { disconnectFromRoom() },
                 onTalkStart = { setMicrophone(true) },
                 onTalkEnd = { setMicrophone(false) },
-                isConnected = room != null
+                isConnected = connected,
+                isConnecting = connecting,
+                isTalking = talking
             )
         }
     }
 
+    private fun requestMicrophonePermissionIfNeeded() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
     private fun connectToRoom() {
-        if (room != null) return
-        kotlinx.coroutines.MainScope().launch {
+        if (connected || connecting) return
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            return
+        }
+
+        connecting = true
+        lifecycleScope.launch {
             try {
                 val identity = "android-${UUID.randomUUID()}"
                 val token = fetchToken(identity, DEFAULT_ROOM)
-                
-                // Use LiveKit.create() to create a room, then connect
                 val createdRoom = LiveKit.create(applicationContext)
+                createdRoom.connect(LIVEKIT_URL, token)
                 room = createdRoom
-                createdRoom.connect(
-                    LIVEKIT_URL,
-                    token
-                )
-                setMicrophone(false)
+                connected = true
+                // Start connected with the microphone muted. PTT enables it only while pressed.
+                createdRoom.localParticipant.setMicrophoneEnabled(false)
             } catch (e: Exception) {
                 e.printStackTrace()
+                room?.disconnect()
+                room = null
+                connected = false
+            } finally {
+                connecting = false
             }
         }
     }
 
     private fun disconnectFromRoom() {
-        kotlinx.coroutines.MainScope().launch {
+        lifecycleScope.launch {
             try {
                 room?.localParticipant?.setMicrophoneEnabled(false)
                 room?.disconnect()
             } finally {
                 room = null
+                connected = false
+                talking = false
             }
         }
     }
 
     private fun setMicrophone(enabled: Boolean) {
         val currentRoom = room ?: return
-        kotlinx.coroutines.MainScope().launch {
+        if (!connected) return
+        talking = enabled
+        lifecycleScope.launch {
             try {
                 currentRoom.localParticipant.setMicrophoneEnabled(enabled)
             } catch (e: Exception) {
                 e.printStackTrace()
+                talking = false
             }
         }
     }
@@ -121,6 +149,12 @@ class MainActivity : ComponentActivity() {
             connection.disconnect()
         }
     }
+
+    override fun onDestroy() {
+        room?.disconnect()
+        room = null
+        super.onDestroy()
+    }
 }
 
 @Composable
@@ -129,10 +163,10 @@ private fun WalkieApp(
     onDisconnect: () -> Unit,
     onTalkStart: () -> Unit,
     onTalkEnd: () -> Unit,
-    isConnected: Boolean
+    isConnected: Boolean,
+    isConnecting: Boolean,
+    isTalking: Boolean
 ) {
-    var talking by remember { mutableStateOf(false) }
-
     MaterialTheme {
         Surface(Modifier.fillMaxSize()) {
             Column(
@@ -141,13 +175,20 @@ private fun WalkieApp(
             ) {
                 Spacer(Modifier.height(40.dp))
                 Text("Walkie", style = MaterialTheme.typography.headlineLarge)
-                Text(if (isConnected) "Connected • Friends" else "Not connected")
+                Text(
+                    when {
+                        isConnecting -> "Connecting to Friends…"
+                        isConnected -> "Connected • Friends"
+                        else -> "Not connected"
+                    }
+                )
                 Spacer(Modifier.weight(1f))
 
-                Button(onClick = {
-                    if (isConnected) onDisconnect() else onConnect()
-                }) {
-                    Text(if (isConnected) "Disconnect" else "Connect")
+                Button(
+                    enabled = !isConnecting,
+                    onClick = { if (isConnected) onDisconnect() else onConnect() }
+                ) {
+                    Text(if (isConnected) "Disconnect" else if (isConnecting) "Connecting…" else "Connect")
                 }
 
                 Spacer(Modifier.height(24.dp))
@@ -159,11 +200,12 @@ private fun WalkieApp(
                             detectTapGestures(
                                 onPress = {
                                     if (!isConnected) return@detectTapGestures
-                                    talking = true
                                     onTalkStart()
-                                    tryAwaitRelease()
-                                    talking = false
-                                    onTalkEnd()
+                                    try {
+                                        tryAwaitRelease()
+                                    } finally {
+                                        onTalkEnd()
+                                    }
                                 }
                             )
                         },
@@ -175,7 +217,7 @@ private fun WalkieApp(
                         tonalElevation = 6.dp
                     ) {
                         Box(contentAlignment = Alignment.Center) {
-                            Text(if (talking) "RELEASE" else "HOLD TO TALK")
+                            Text(if (isTalking) "RELEASE" else "HOLD TO TALK")
                         }
                     }
                 }
@@ -184,7 +226,7 @@ private fun WalkieApp(
                 Text(
                     when {
                         !isConnected -> "Connect to start"
-                        talking -> "Transmitting microphone audio"
+                        isTalking -> "Transmitting microphone audio"
                         else -> "Listening"
                     }
                 )
