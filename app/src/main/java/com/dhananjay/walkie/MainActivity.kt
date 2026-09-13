@@ -58,13 +58,13 @@ class MainActivity : ComponentActivity() {
                 val identity = "android-${UUID.randomUUID()}"
                 val token = fetchToken(identity, DEFAULT_ROOM)
                 
-                // Use LiveKit.connect() to create and connect to a room
-                val connectedRoom = LiveKit.connect(
-                    applicationContext,
+                // Use LiveKit.create() to create a room, then connect
+                val createdRoom = LiveKit.create(applicationContext)
+                room = createdRoom
+                createdRoom.connect(
                     LIVEKIT_URL,
                     token
                 )
-                room = connectedRoom
                 setMicrophone(false)
             } catch (e: Exception) {
                 e.printStackTrace()
