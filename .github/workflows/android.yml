@@ -24,15 +24,18 @@ jobs:
         env:
           FIREBASE_GOOGLE_SERVICES_JSON: ${{ secrets.FIREBASE_GOOGLE_SERVICES_JSON }}
         run: |
-          if [ -z "$FIREBASE_GOOGLE_SERVICES_JSON" ]; then
+          set -euo pipefail
+          if [ -z "${FIREBASE_GOOGLE_SERVICES_JSON:-}" ]; then
             echo "FIREBASE_GOOGLE_SERVICES_JSON secret is not configured"
             exit 1
           fi
+          mkdir -p app
           printf '%s' "$FIREBASE_GOOGLE_SERVICES_JSON" > app/google-services.json
           test -s app/google-services.json
+          python3 -m json.tool app/google-services.json >/dev/null
 
       - name: Build debug APK
-        run: gradle assembleDebug --no-daemon
+        run: gradle assembleDebug --no-daemon --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
