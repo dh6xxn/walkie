@@ -6,12 +6,16 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
@@ -332,73 +336,248 @@ private fun WalkieApp(
     hasRemoteSpeaker: Boolean,
     status: String
 ) {
+    val background = Color(0xFFFFF7FF)
+    val primaryText = Color(0xFF171217)
+    val secondaryText = Color(0xFF6F6870)
+    val red = Color(0xFFE83232)
+    val disabledRed = Color(0xFFE99A9A)
+
     MaterialTheme {
-        Surface(Modifier.fillMaxSize()) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = background
+        ) {
             Column(
-                Modifier.fillMaxSize().padding(24.dp),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Spacer(Modifier.height(40.dp))
-                Text("Walkie", style = MaterialTheme.typography.headlineLarge)
-                Text(status)
-                Spacer(Modifier.weight(1f))
-                Button(
-                    enabled = !isConnecting,
-                    onClick = { if (isConnected) onDisconnect() else onConnect() }
-                ) {
-                    Text(if (isConnected) "Disconnect" else if (isConnecting) "Connecting…" else "Connect")
-                }
-                Spacer(Modifier.height(24.dp))
-                val talkEnabled = isConnected && !hasRemoteSpeaker && !isRequestingTalk
-                Box(
-                    Modifier
-                        .size(170.dp)
-                        .pointerInput(isConnected, hasRemoteSpeaker, isRequestingTalk) {
-                            detectTapGestures(
-                                onPress = {
-                                    if (!talkEnabled) return@detectTapGestures
-                                    onTalkStart()
-                                    try {
-                                        tryAwaitRelease()
-                                    } finally {
-                                        onTalkEnd()
-                                    }
-                                }
-                            )
-                        }
-                ) {
-                    Surface(
-                        Modifier.fillMaxSize(),
-                        shape = MaterialTheme.shapes.extraLarge,
-                        color = if (talkEnabled || isTalking) Color(0xFFE53935) else Color(0xFFEAA0A0),
-                        tonalElevation = 6.dp
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Text(
-                                when {
-                                    isTalking -> "RELEASE"
-                                    hasRemoteSpeaker -> "BUSY"
-                                    isRequestingTalk -> "WAIT…"
-                                    else -> "HOLD TO TALK"
-                                },
-                                color = Color.White
-                            )
-                        }
-                    }
-                }
-                Spacer(Modifier.height(24.dp))
+                Spacer(Modifier.height(70.dp))
                 Text(
-                    when {
-                        !isConnected -> "Connect to start"
-                        hasRemoteSpeaker -> "Wait for ${displayNameForUi(status)} to finish"
-                        isRequestingTalk -> "Waiting for microphone…"
-                        else -> "Hold to transmit • Release to listen"
-                    }
+                    text = "Walkie",
+                    style = MaterialTheme.typography.displaySmall,
+                    color = primaryText
                 )
+
+                Spacer(Modifier.height(18.dp))
+
+                if (isConnected) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(12.dp)
+                                .padding(end = 6.dp)
+                        ) {
+                            Canvas(Modifier.fillMaxSize()) {
+                                drawCircle(Color(0xFF42D56B))
+                            }
+                        }
+                        Spacer(Modifier.width(7.dp))
+                        Text(
+                            text = "Connected",
+                            style = MaterialTheme.typography.titleLarge,
+                            color = primaryText
+                        )
+                    }
+                    Spacer(Modifier.height(5.dp))
+                    Text(
+                        text = "Room: friends",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = secondaryText
+                    )
+                } else {
+                    Text(
+                        text = if (isConnecting) status else status,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = secondaryText
+                    )
+                }
+
                 Spacer(Modifier.weight(1f))
+
+                if (isConnected && hasRemoteSpeaker) {
+                    MicIndicator(
+                        modifier = Modifier.size(210.dp),
+                        color = Color(0xFFB92D32)
+                    )
+                    Spacer(Modifier.height(24.dp))
+                    Text(
+                        text = "Friend is talking",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = primaryText
+                    )
+                    Spacer(Modifier.height(3.dp))
+                    Text(
+                        text = "Please wait to speak",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = secondaryText
+                    )
+                } else if (isConnected && isTalking) {
+                    MicIndicator(
+                        modifier = Modifier.size(210.dp),
+                        color = red
+                    )
+                    Spacer(Modifier.height(24.dp))
+                    Text(
+                        text = "You are talking",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = primaryText
+                    )
+                    Spacer(Modifier.height(3.dp))
+                    Text(
+                        text = "Release to listen",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = secondaryText
+                    )
+                } else {
+                    Spacer(Modifier.height(210.dp))
+                }
+
+                Spacer(Modifier.height(28.dp))
+
+                if (!isConnected) {
+                    Button(
+                        onClick = onConnect,
+                        enabled = !isConnecting
+                    ) {
+                        Text(if (isConnecting) "Connecting…" else "Connect")
+                    }
+                } else {
+                    val talkEnabled = !hasRemoteSpeaker && !isRequestingTalk
+                    Box(
+                        modifier = Modifier
+                            .size(168.dp)
+                            .pointerInput(hasRemoteSpeaker, isRequestingTalk, isTalking) {
+                                detectTapGestures(
+                                    onPress = {
+                                        if (!talkEnabled && !isTalking) return@detectTapGestures
+                                        if (!isTalking) onTalkStart()
+                                        try {
+                                            tryAwaitRelease()
+                                        } finally {
+                                            onTalkEnd()
+                                        }
+                                    }
+                                )
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Surface(
+                            modifier = Modifier.fillMaxSize(),
+                            shape = MaterialTheme.shapes.extraLarge,
+                            color = if (talkEnabled || isTalking) red else disabledRed,
+                            tonalElevation = 4.dp
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    MicGlyph(
+                                        modifier = Modifier.size(45.dp),
+                                        color = Color.White
+                                    )
+                                    Spacer(Modifier.height(10.dp))
+                                    Text(
+                                        text = when {
+                                            isTalking -> "RELEASE"
+                                            hasRemoteSpeaker -> "HOLD TO TALK"
+                                            isRequestingTalk -> "WAIT…"
+                                            else -> "HOLD TO TALK"
+                                        },
+                                        color = Color.White,
+                                        style = MaterialTheme.typography.labelLarge
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(25.dp))
+
+                if (isConnected) {
+                    Text(
+                        text = when {
+                            hasRemoteSpeaker -> "Busy — wait for them to finish"
+                            isRequestingTalk -> "Waiting for microphone…"
+                            isTalking -> "Release to listen"
+                            else -> "Press and hold to talk"
+                        },
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = secondaryText
+                    )
+                    if (!hasRemoteSpeaker && !isRequestingTalk && !isTalking) {
+                        Text(
+                            text = "Release to listen",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = secondaryText
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(70.dp))
             }
         }
     }
+}
+
+@Composable
+private fun MicIndicator(modifier: Modifier = Modifier, color: Color) {
+    Canvas(modifier) {
+        val center = Offset(size.width / 2f, size.height / 2f)
+        val radius = size.minDimension * 0.43f
+        drawCircle(color.copy(alpha = 0.045f), radius, center)
+        drawCircle(color.copy(alpha = 0.07f), radius * 0.72f, center)
+        drawCircle(color.copy(alpha = 0.10f), radius * 0.50f, center)
+        MicGlyphCanvas(center, radius * 0.27f, color)
+    }
+}
+
+@Composable
+private fun MicGlyph(modifier: Modifier = Modifier, color: Color) {
+    Canvas(modifier) {
+        MicGlyphCanvas(Offset(size.width / 2f, size.height / 2f), size.minDimension * 0.32f, color)
+    }
+}
+
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.MicGlyphCanvas(
+    center: Offset,
+    scale: Float,
+    color: Color
+) {
+    val micWidth = scale * 0.72f
+    val micHeight = scale * 1.35f
+    val left = center.x - micWidth / 2f
+    val top = center.y - micHeight * 0.55f
+    drawRoundRect(
+        color = color,
+        topLeft = Offset(left, top),
+        size = Size(micWidth, micHeight),
+        cornerRadius = androidx.compose.ui.geometry.CornerRadius(micWidth / 2f)
+    )
+    val arcLeft = center.x - scale * 0.55f
+    val arcTop = center.y - scale * 0.25f
+    val arcSize = Size(scale * 1.1f, scale * 1.05f)
+    drawArc(
+        color = color,
+        startAngle = 0f,
+        sweepAngle = 180f,
+        useCenter = false,
+        topLeft = arcLeft to arcTop,
+        size = arcSize,
+        style = androidx.compose.ui.graphics.drawscope.Stroke(width = scale * 0.13f)
+    )
+    drawLine(
+        color = color,
+        start = Offset(center.x, center.y + scale * 0.30f),
+        end = Offset(center.x, center.y + scale * 0.72f),
+        strokeWidth = scale * 0.13f
+    )
+    drawLine(
+        color = color,
+        start = Offset(center.x - scale * 0.34f, center.y + scale * 0.75f),
+        end = Offset(center.x + scale * 0.34f, center.y + scale * 0.75f),
+        strokeWidth = scale * 0.13f
+    )
 }
 
 private fun displayNameForUi(status: String): String =
