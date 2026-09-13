@@ -114,7 +114,7 @@ class MainActivity : ComponentActivity() {
         withContext(Dispatchers.IO) {
             var targetUrl = TOKEN_URL
             var redirects = 0
-            loop@ while (true) {
+            while (true) {
                 val connection = (URL(targetUrl).openConnection() as HttpURLConnection).apply {
                     requestMethod = "POST"
                     connectTimeout = 10_000
@@ -134,15 +134,14 @@ class MainActivity : ComponentActivity() {
                         if (location.isNullOrBlank()) throw IllegalStateException("Token server returned HTTP $code without a redirect location")
                         if (++redirects > 5) throw IllegalStateException("Token server redirected too many times")
                         targetUrl = URL(URL(targetUrl), location).toString()
-                        continue@loop
+                    } else {
+                        val response = if (code in 200..299) connection.inputStream.bufferedReader().use { it.readText() } else connection.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
+                        val json = runCatching { JSONObject(response) }.getOrElse { throw IllegalStateException("Token server returned HTTP $code: $response") }
+                        if (code !in 200..299) throw IllegalStateException(json.optString("error", "Token request failed (HTTP $code)"))
+                        val token = json.optString("participant_token").ifBlank { json.optString("token") }
+                        if (token.isBlank()) throw IllegalStateException("Token server returned no access token")
+                        return@withContext Pair(token, json.optString("server_url"))
                     }
-
-                    val response = if (code in 200..299) connection.inputStream.bufferedReader().use { it.readText() } else connection.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
-                    val json = runCatching { JSONObject(response) }.getOrElse { throw IllegalStateException("Token server returned HTTP $code: $response") }
-                    if (code !in 200..299) throw IllegalStateException(json.optString("error", "Token request failed (HTTP $code)"))
-                    val token = json.optString("participant_token").ifBlank { json.optString("token") }
-                    if (token.isBlank()) throw IllegalStateException("Token server returned no access token")
-                    return@withContext Pair(token, json.optString("server_url"))
                 } finally { connection.disconnect() }
             }
         }
@@ -159,10 +158,10 @@ private fun WalkieApp(
         Surface(Modifier.fillMaxSize()) {
             Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Spacer(Modifier.height(40.dp)); Text("Walkie", style = MaterialTheme.typography.headlineLarge); Text(status); Spacer(Modifier.weight(1f))
-                Button(enabled = !isConnecting, onClick = { if (isConnected) onDisconnect() else onConnect() }) { Text(if (isConnected) "Disconnect" else if (isConnecting) "Connecting…" else "Connect") }
+                Button(enabled = !isConnecting, onClick = { if (isConnected) onDisconnect() else onConnect() }) { Text(if (isConnected) "Disconnect" else if (isConnecting) "Connecting…" else "C[...]
                 Spacer(Modifier.height(24.dp))
-                Box(Modifier.size(220.dp).pointerInput(isConnected) { detectTapGestures(onPress = { if (!isConnected) return@detectTapGestures; onTalkStart(); try { tryAwaitRelease() } finally { onTalkEnd() } }) }) {
-                    Surface(Modifier.fillMaxSize(), shape = MaterialTheme.shapes.extraLarge, tonalElevation = 6.dp) { Box(contentAlignment = Alignment.Center) { Text(if (isTalking) "RELEASE" else "HOLD TO TALK", style = MaterialTheme.typography.headlineSmall) } }
+                Box(Modifier.size(220.dp).pointerInput(isConnected) { detectTapGestures(onPress = { if (!isConnected) return@detectTapGestures; onTalkStart(); try { tryAwaitRelease() } finally { [...]
+                    Surface(Modifier.fillMaxSize(), shape = MaterialTheme.shapes.extraLarge, tonalElevation = 6.dp) { Box(contentAlignment = Alignment.Center) { Text(if (isTalking) "RELEASE" else[...]
                 }
                 Spacer(Modifier.height(24.dp)); Text(if (isConnected) "Hold to transmit" else "Connect to start"); Spacer(Modifier.weight(1f))
             }
