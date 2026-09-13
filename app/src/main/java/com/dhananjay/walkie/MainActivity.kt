@@ -15,7 +15,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import io.livekit.android.LiveKit
 import io.livekit.android.room.Room
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -57,12 +56,14 @@ class MainActivity : ComponentActivity() {
             try {
                 val identity = "android-${UUID.randomUUID()}"
                 val token = fetchToken(identity, DEFAULT_ROOM)
-                val connectedRoom = LiveKit.connect(
-                    applicationContext,
+                
+                // Create a new Room instance and connect
+                val newRoom = Room(applicationContext)
+                newRoom.connect(
                     LIVEKIT_URL,
                     token
                 )
-                room = connectedRoom
+                room = newRoom
                 setMicrophone(false)
             } catch (e: Exception) {
                 e.printStackTrace()
