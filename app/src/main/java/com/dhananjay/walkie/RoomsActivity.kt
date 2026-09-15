@@ -621,13 +621,15 @@ private fun WalkieRoomsApp(
             onDismissRequest = { showCreate = false },
             title = { Text("Create New Room") },
             text = {
-                OutlinedTextField(
-                    value = createInput,
-                    onValueChange = { createInput = it },
-                    singleLine = true,
-                    label = { Text("Room name") },
-                    supportingText = { Text("1–32 letters, numbers, spaces, _ or -") }
-                )
+                Column {
+                    OutlinedTextField(
+                        value = createInput,
+                        onValueChange = { input -> createInput = input },
+                        singleLine = true,
+                        label = { Text("Room name") },
+                        supportingText = { Text("1–32 letters, numbers, spaces, _ or -") }
+                    )
+                }
             },
             confirmButton = {
                 TextButton(
@@ -674,11 +676,11 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawMic(
     val micHeight = scale * 1.35f
     val left = center.x - micWidth / 2f
     val top = center.y - micHeight * 0.55f
-    drawRoundRect(color = color, topLeft = androidx.compose.ui.geometry.Offset(left, top), size = androidx.compose.ui.geometry.Size(micWidth, micHeight), cornerRadius = androidx.compose.ui.geometry.CornerRadius(micWidth / 2f))
+    drawRoundRect(color = color, topLeft = androidx.compose.ui.geometry.Offset(left, top), size = androidx.compose.ui.geometry.Size(micWidth, micHeight), cornerRadius = androidx.compose.ui.geometry.CornerRadius(scale * 0.18f, scale * 0.18f))
     val arcLeft = center.x - scale * 0.55f
     val arcTop = center.y - scale * 0.25f
     val arcSize = androidx.compose.ui.geometry.Size(scale * 1.1f, scale * 1.05f)
-    drawArc(color = color, startAngle = 0f, sweepAngle = 180f, useCenter = false, topLeft = androidx.compose.ui.geometry.Offset(arcLeft, arcTop), size = arcSize, style = androidx.compose.ui.graphics.drawscope.Stroke(width = scale * 0.13f))
-    drawLine(color = color, start = androidx.compose.ui.geometry.Offset(center.x, center.y + scale * 0.30f), end = androidx.compose.ui.geometry.Offset(center.x, center.y + scale * 0.72f), strokeWidth = scale * 0.13f)
-    drawLine(color = color, start = androidx.compose.ui.geometry.Offset(center.x - scale * 0.34f, center.y + scale * 0.75f), end = androidx.compose.ui.geometry.Offset(center.x + scale * 0.34f, center.y + scale * 0.75f), strokeWidth = scale * 0.13f)
+    drawArc(color = color, startAngle = 0f, sweepAngle = 180f, useCenter = false, topLeft = androidx.compose.ui.geometry.Offset(arcLeft, arcTop), size = arcSize, style = androidx.compose.ui.graphics.Stroke(width = scale * 0.08f))
+    drawLine(color = color, start = androidx.compose.ui.geometry.Offset(center.x, center.y + scale * 0.30f), end = androidx.compose.ui.geometry.Offset(center.x, center.y + scale * 0.72f), strokeWidth = scale * 0.08f)
+    drawLine(color = color, start = androidx.compose.ui.geometry.Offset(center.x - scale * 0.34f, center.y + scale * 0.75f), end = androidx.compose.ui.geometry.Offset(center.x + scale * 0.34f, center.y + scale * 0.75f), strokeWidth = scale * 0.08f)
 }
