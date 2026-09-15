@@ -1,7 +1,7 @@
 from pathlib import Path
 
-path = Path("app/src/main/java/com/dhananjay/walkie/MainActivity.kt")
-text = path.read_text()
+main_path = Path("app/src/main/java/com/dhananjay/walkie/MainActivity.kt")
+text = main_path.read_text()
 
 # Keep the push-to-talk gesture stable while Compose state changes during arbitration.
 old_anchor = '''                } else {\n                    val talkEnabled = !hasRemoteSpeaker && !isRequestingTalk\n                    Box(\n'''
@@ -24,5 +24,28 @@ if 'Text("Disconnect")' not in text:
         raise SystemExit("Expected connected-room UI anchor not found")
     text = text.replace(disconnect_anchor, disconnect_replacement, 1)
 
-path.write_text(text)
-print("Push-to-talk and disconnect UI fixes applied")
+main_path.write_text(text)
+
+# The room screens use rememberSaveable and Compose TextField lambdas. Keep the
+# generated/build-time versions compatible with the current Compose compiler.
+for name in ("RoomsActivity.kt", "MultiRoomActivity.kt"):
+    path = Path("app/src/main/java/com/dhananjay/walkie") / name
+    text = path.read_text()
+
+    if "import androidx.compose.runtime.saveable.rememberSaveable" not in text:
+        anchor = "import androidx.compose.runtime.*\n"
+        if anchor not in text:
+            raise SystemExit(f"Compose runtime import anchor not found in {name}")
+        text = text.replace(anchor, anchor + "import androidx.compose.runtime.saveable.rememberSaveable\n", 1)
+
+    text = text.replace(
+        'OutlinedTextField(roomInput, { roomInput = it }, singleLine = true, label = { Text("Room name or code") }, modifier = Modifier.fillMaxWidth())',
+        'OutlinedTextField(\n                    value = roomInput,\n                    onValueChange = { newInput: String -> roomInput = newInput },\n                    singleLine = true,\n                    label = { Text("Room name or code") },\n                    modifier = Modifier.fillMaxWidth()\n                )'
+    )
+    text = text.replace(
+        'OutlinedTextField(createInput, { createInput = it }, singleLine = true, label = { Text("Room name") }, supportingText = { Text("1–32 letters, numbers, spaces, _ or -") })',
+        'OutlinedTextField(\n                    value = createInput,\n                    onValueChange = { newInput: String -> createInput = newInput },\n                    singleLine = true,\n                    label = { Text("Room name") },\n                    supportingText = { Text("1–32 letters, numbers, spaces, _ or -") }\n                )'
+    )
+    path.write_text(text)
+
+print("Push-to-talk, disconnect, and room Compose compilation fixes applied")
