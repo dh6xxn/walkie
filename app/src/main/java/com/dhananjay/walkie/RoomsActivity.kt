@@ -238,9 +238,7 @@ class RoomsActivity : ComponentActivity() {
                     }
                 }
             }
-            is RoomEvent.ParticipantConnected -> {
-                updateParticipants(currentRoom)
-            }
+            is RoomEvent.ParticipantConnected -> updateParticipants(currentRoom)
             is RoomEvent.ParticipantDisconnected -> {
                 val departed = event.participant.identity.toString()
                 pendingTalkRequests.entries.removeIf { it.value == departed }
@@ -488,10 +486,7 @@ private fun WalkieRoomsApp(
                         modifier = Modifier.fillMaxWidth()
                     ) { Text(if (isConnecting) "Connecting…" else "JOIN ROOM") }
                     Spacer(Modifier.height(12.dp))
-                    OutlinedButton(
-                        onClick = { showRooms = true },
-                        modifier = Modifier.fillMaxWidth()
-                    ) { Text("MY ROOMS") }
+                    OutlinedButton(onClick = { showRooms = true }, modifier = Modifier.fillMaxWidth()) { Text("MY ROOMS") }
                     Spacer(Modifier.height(12.dp))
                     TextButton(onClick = { showCreate = true }) { Text("＋ Create New Room") }
                     Spacer(Modifier.weight(1f))
@@ -515,7 +510,6 @@ private fun WalkieRoomsApp(
                     Text("Room: $currentRoomName", style = MaterialTheme.typography.bodyLarge, color = secondaryText)
                     Spacer(Modifier.height(8.dp))
                     Text("${participants.size + 1} people in room", style = MaterialTheme.typography.bodyMedium, color = secondaryText)
-
                     Spacer(Modifier.weight(1f))
                     when {
                         hasRemoteSpeaker -> {
@@ -533,7 +527,6 @@ private fun WalkieRoomsApp(
                         else -> Spacer(Modifier.height(210.dp))
                     }
                     Spacer(Modifier.height(24.dp))
-
                     val talkEnabled = !hasRemoteSpeaker && !isRequestingTalk && !isReconnecting
                     Box(
                         modifier = Modifier.size(168.dp).pointerInput(Unit) {
@@ -631,16 +624,14 @@ private fun WalkieRoomsApp(
                 )
             },
             confirmButton = {
-                TextButton(
-                    onClick = {
-                        val name = createInput.trim()
-                        if (name.isNotBlank()) {
-                            showCreate = false
-                            createInput = ""
-                            onCreateRoom(name)
-                        }
+                TextButton(onClick = {
+                    val name = createInput.trim()
+                    if (name.isNotBlank()) {
+                        showCreate = false
+                        createInput = ""
+                        onCreateRoom(name)
                     }
-                ) { Text("CREATE & JOIN") }
+                }) { Text("CREATE & JOIN") }
             },
             dismissButton = { TextButton(onClick = { showCreate = false }) { Text("CANCEL") } }
         )
