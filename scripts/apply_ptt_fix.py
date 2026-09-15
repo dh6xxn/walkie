@@ -26,11 +26,16 @@ if 'Text("Disconnect")' not in text:
 
 main_path.write_text(text)
 
-# The room screens use rememberSaveable and Compose TextField lambdas. Keep the
-# generated/build-time versions compatible with the current Compose compiler.
+# Keep the room screens compatible with the current Compose compiler.
 for name in ("RoomsActivity.kt", "MultiRoomActivity.kt"):
     path = Path("app/src/main/java/com/dhananjay/walkie") / name
     text = path.read_text()
+
+    # Stroke is a DrawScope type, not androidx.compose.ui.graphics.Stroke.
+    text = text.replace(
+        "import androidx.compose.ui.graphics.Stroke",
+        "import androidx.compose.ui.graphics.drawscope.Stroke"
+    )
 
     if "import androidx.compose.runtime.saveable.rememberSaveable" not in text:
         anchor = "import androidx.compose.runtime.*\n"
